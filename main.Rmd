@@ -1,0 +1,250 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(rayshader)
+library(sp)
+library(raster)
+library(scales)
+library(readr)
+
+towns <- read_csv("towns.csv")
+```
+
+
+```{r}
+elevation_1 <- raster("N07E079.hgt")
+elevation_2 <- raster("N07E080.hgt")
+elevation_3 <- raster("N07E081.hgt")
+
+elevation_4 <- raster("N06E079.hgt")
+elevation_5 <- raster("N06E080.hgt")
+elevation_6 <- raster("N06E081.hgt")
+
+elevation_7 <- raster("N08E079.hgt")
+elevation_8 <- raster("N08E080.hgt")
+elevation_9 <- raster("N08E081.hgt")
+
+elevation_10 <- raster("N09E079.hgt")
+elevation_11 <- raster("N09E080.hgt")
+
+elevation_top <- merge(elevation_10, elevation_11)
+elevation_upper <- merge(elevation_7, elevation_8, elevation_9)
+elevation_mid <- merge(elevation_1, elevation_2, elevation_3)
+elevation_low <- merge(elevation_4, elevation_5, elevation_6)
+
+#merge the mid and low elevation
+elevation_t1 <- merge(elevation_top, elevation_upper)
+elevation_t2 <- merge(elevation_mid, elevation_low)
+elevation <- merge(elevation_t1, elevation_t2)
+
+```
+
+
+```{r}
+#fact is 20
+#High res fact is 8
+low_res_raster <- aggregate(elevation, fact = 8)
+
+
+# Convert the low resolution raster back to a matrix
+low_res_matrix <- as.matrix(low_res_raster)
+low_res_matrix_corrected <- low_res_matrix[, ncol(low_res_matrix):1]
+
+# Create the plot with reduced resolution and smaller window size
+
+ext <- extent(0, 481, 0, 361)
+transform_coordinates <- function(long, lat) {
+  # Hard-coded reference points
+  #9.825598, 80.250374
+  long1 <- 80.250374
+  lat1 <- 9.825598
+  x1 <- 150
+  y1 <- 20
+
+  long2 <- 81.320306
+  lat2 <- 8.524630
+  x2 <- 278
+  y2 <- 177
+
+  # Calculate transformation coefficients
+  a1 <- (x2 - x1) / (long2 - long1)
+  b1 <- x1 - a1 * long1
+  
+  a2 <- (y2 - y1) / (lat2 - lat1)
+  b2 <- y1 - a2 * lat1
+
+  # Transform coordinates
+  if(is.na(long) || is.na(lat)) return(c(NA, NA))
+  x <- a1 * long + b1
+  y <- a2 * lat + b2
+
+  return(c(x, y))
+}
+#render point at 150 10
+#render_points(extent = ext, lat = 150, long = 20, altitude = 10, zscale = 50, color = "red", size = 3)
+
+transform_coordinates_V <- Vectorize(transform_coordinates)
+
+x_cords <- transform_coordinates_V(towns$lon, towns$lat)[1,]
+y_cords <- transform_coordinates_V(towns$lon, towns$lat)[2,]
+
+cords <- data.frame(x = x_cords, y = y_cords) %>% filter(!is.na(x) & !is.na(y)) %>% 
+  #x should be between 0-361, y between 0-481
+  filter(x >= 0 & x <= 361 & y >= 0 & y <= 481)
+
+#Negombo 7.215498, 79.865802
+#Colombo 6.928989, 79.866500
+#Kandy 7.290572, 80.633728
+
+#Getting transformed coordinates
+x_cord_negombo <- transform_coordinates(79.865802, 7.215498)[1]
+y_cord_negombo <- transform_coordinates(79.865802, 7.215498)[2]
+
+x_cord_colombo <- transform_coordinates(79.866500, 6.928989)[1]
+y_cord_colombo <- transform_coordinates(79.866500, 6.928989)[2]
+
+x_cord_kandy <- transform_coordinates(80.633728, 7.290572)[1]
+y_cord_kandy <- transform_coordinates(80.633728, 7.290572)[2]
+
+#Jaffna 9.6612, 80.0250
+x_cord_jaffna <- transform_coordinates(80.0250, 9.6612)[1]
+y_cord_jaffna <- transform_coordinates(80.0250, 9.6612)[2]
+
+```
+
+```{r}
+
+# Function to add points incrementally
+add_points_incrementally <- function(i, total_frames, cords, ext) {
+  num_points <- floor(i / total_frames * nrow(cords))
+  if (num_points > 0) {
+   
+    
+    render_points(extent = ext, lat = cords$x[1:num_points], long = cords$y[1:num_points], altitude = 100, zscale = 50, color = "#EEC900", size = 10)
+
+  render_points(extent = ext, lat = cords$x[1:num_points], long = cords$y[1:num_points], altitude = 400, zscale = 50, color = "#F6E300", size = 6)
+
+  render_points(extent = ext, lat = cords$x[1:num_points], long = cords$y[1:num_points], altitude = 800, zscale = 50, color = "#FAF100", size = 4)
+
+  render_points(extent = ext, lat = cords$x[1:num_points], long = cords$y[1:num_points], altitude = 1000, zscale = 50, color = "yellow", size = 2)
+  }
+}
+
+# Animation parameters
+total_frames <- 90  # Full rotation
+fps <- 30
+
+# Function to perform one step of the animation
+animate_step <- function(step) {
+  # Rotate the scene
+  rgl::view3d(theta = 45 + (step * 1), phi = 35, zoom = 0.5, fov = 0)
+  
+  # Add points incrementally
+  add_points_incrementally(step, total_frames, cords, ext)
+  
+  # Force the scene to update
+  rgl::rgl.bringtotop()
+}
+
+```
+
+
+```{r}
+custom_colors <- grDevices::colorRampPalette(c("#0D7E3A", "white", "#FFA600", "#5A2303"))
+
+height_shaded <- height_shade(low_res_matrix_corrected, texture = custom_colors(256))
+
+sphere_shaded <- sphere_shade(low_res_matrix_corrected, texture = 'desert', sunangle = 30, colorintensity = 3) %>% 
+  add_shadow(ray_shade(low_res_matrix_corrected, zscale = 3), 0.5) %>% 
+  add_shadow(ambient_shade(low_res_matrix_corrected), 0)
+
+combined_shade <- add_overlay(height_shaded, sphere_shaded, alphalayer = 0.8)
+#final_shade <- add_water(combined_shade, color = 'desert', watermap = detect_water(low_res_matrix_corrected))
+#add_shadow(ray_shade(low_res_matrix_corrected, zscale = 3), 0.5)
+
+water_map <- detect_water(low_res_matrix_corrected)
+land_mask <- ifelse(water_map, NA, 1)
+flipped_land_mask <- land_mask[nrow(land_mask):1, ]
+
+cols <- dim(flipped_land_mask)[2]
+right_third_start <- cols * 8/10
+flipped_land_mask[, ceiling(right_third_start):cols] <- NA
+
+initial_scene <- combined_shade 
+```
+
+```{r}
+plot_3d(combined_shade,
+        (low_res_matrix_corrected * flipped_land_mask), zscale = 30, fov = 0, theta = 90, zoom = 0.7, phi = 90, windowsize = c(1600, 800))
+
+render_clouds(aperm(combined_shade, c(2, 1, 3)), zscale = 3, start_altitude = 200, end_altitude = 240, attenuation_coef = 0.05, clear_clouds = T, cloud_cover = 0.4, layers = 2, offset_x = 2)
+
+
+for (i in 1:total_frames) {
+  animate_step(i)
+  render_snapshot(paste0("frames/animation_", i, ".png"))
+  Sys.sleep(1/fps)  # Control animation speed
+}
+
+# Keep the window open
+rgl::rgl.bringtotop()
+cat("Animation complete. Close the RGL window to exit.\n")
+```
+
+Static render
+
+```{r}
+custom_colors <- grDevices::colorRampPalette(c("#09752A", "white", "#D8983F", "#5A2303"))
+
+height_shaded <- height_shade(low_res_matrix_corrected, texture = custom_colors(256))
+
+sphere_shaded <- sphere_shade(low_res_matrix_corrected, texture = 'desert', colorintensity = 3) %>% 
+  add_shadow(ray_shade(low_res_matrix_corrected, zscale = 0.1), 0.2) %>% 
+  add_shadow(ambient_shade(low_res_matrix_corrected), 0)
+
+combined_shade <- add_overlay(height_shaded, sphere_shaded, alphalayer = 0.7)
+
+
+water_map <- detect_water(low_res_matrix_corrected)
+land_mask <- ifelse(water_map, NA, 1)
+flipped_land_mask <- land_mask[nrow(land_mask):1, ]
+
+cols <- dim(flipped_land_mask)[2]
+right_third_start <- cols * 8/10
+flipped_land_mask[, ceiling(right_third_start):cols] <- NA
+
+initial_scene <- combined_shade 
+
+plot_3d(combined_shade,
+        (low_res_matrix_corrected * flipped_land_mask), zscale = 20, fov = 0, theta = 90, zoom = 0.7, phi = 90, windowsize = c(1600, 800))
+```
+
+```{r}
+plot_3d(combined_shade,
+        (low_res_matrix_corrected * flipped_land_mask), zscale = 30, fov = 0, theta = 90, zoom = 0.7, phi = 90, windowsize = c(1600, 800))
+
+render_clouds(aperm(combined_shade, c(2, 1, 3)), zscale = 3, start_altitude = 200, end_altitude = 240, attenuation_coef = 0.05, clear_clouds = T, cloud_cover = 0.4, layers = 2, offset_x = 2)
+
+
+render_points(extent = ext, lat = cords$x, long = cords$y, altitude = 100, zscale = 50, color = "#EEC900", size = 8)
+
+render_points(extent = ext, lat = cords$x, long = cords$y, altitude = 400, zscale = 50, color = "#F6E300", size = 5)
+
+render_points(extent = ext, lat = cords$x, long = cords$y, altitude = 800, zscale = 50, color = "#FAF100", size = 2)
+
+render_points(extent = ext, lat = cords$x, long = cords$y, altitude = 1000, zscale = 50, color = "yellow", size = 1)
+
+```
+
+
+
+```{r}
+vegetation_data <- raster("veg.tif")
+veg_matrix <- as.matrix(vegetation_data)
+```
+
+
